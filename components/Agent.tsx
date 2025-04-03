@@ -5,6 +5,7 @@ import {cn} from "@/lib/utils";
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { vapi } from "@/lib/vapi.sdk";
+import { interviewer } from "@/constants";
 
 enum CallStatus {
     INACTIVE = "INACTIVE",
@@ -18,7 +19,7 @@ interface SavedMessage {
     content: string;
 }
 
-const Agent = ({userName, userId, type}: AgentProps) => {
+const Agent = ({userName, userId, type, interviewId, questions}: AgentProps) => {
   //  const callStatus = CallStatus.FINISHED;
    // const isSpeaking = true;
     const [isSpeaking, setIsSpeaking] = useState(false);
@@ -74,18 +75,54 @@ const Agent = ({userName, userId, type}: AgentProps) => {
     }, []);
 
     useEffect(() => {
-        if(callStatus === CallStatus.FINISHED) router.push("/");
+        const handleGenerateFeedback = async (messages: SavedMessage[]) => {
+            console.log("handleGenerateFeedback");
+
+           const {success, id} = {
+               success:true,
+               id: 'feedback-id',
+           }
+
+            if (success && id) {
+                router.push(`/interview/${interviewId}/feedback`);
+            } else {
+                console.log("Error saving feedback");
+                router.push("/");
+            }
+        };
+        if (callStatus === CallStatus.FINISHED) {
+            if (type === "generate"){
+                router.push("/");
+            }else{
+                handleGenerateFeedback(messages);
+            }
+        }
     }, [messages, callStatus, type, userId]);
 
     const handleCall = async () => {
         setCallStatus(CallStatus.CONNECTING);
+        if (type === "generate"){
 
-        await vapi.start(process.env.NEXT_PUBLIC_VAPI_WORKFLOW_ID!, {
-            variableValues: {
-                username: userName,
-                userid: userId,
-            },
-        });
+            await vapi.start(process.env.NEXT_PUBLIC_VAPI_WORKFLOW_ID!, {
+                variableValues: {
+                    username: userName,
+                    userid: userId,
+                },
+            });
+        }else{
+            let formattedQuestions = "";
+            if (questions) {
+                formattedQuestions = questions
+                    .map((question) => `- ${question}`)
+                    .join("\n");
+            }
+            await vapi.start(interviewer, {
+                variableValues: {
+                    questions: formattedQuestions,
+                },
+            });
+        }
+
     };
 
     const handleDisconnect = () => {
