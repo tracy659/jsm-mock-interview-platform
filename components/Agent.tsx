@@ -219,7 +219,6 @@ interface AgentProps {
   userId: string;
   type: string;
   interviewId?: string;
-  questions?: string[];
   role?: string;
   level?: string;
   techstack?: string;
@@ -236,7 +235,6 @@ const Agent = ({
   userId,
   type,
   interviewId,
-  questions,
   role,
   level,
   techstack,
@@ -251,7 +249,7 @@ const Agent = ({
   const [messages, setMessages] = useState<SavedMessage[]>([]);
   const messageContainerRef = useRef<HTMLDivElement>(null);
 
-  // auto-scroll messages
+  // auto-scroll transcript
   useEffect(() => {
     if (messageContainerRef.current) {
       messageContainerRef.current.scrollTop =
@@ -266,17 +264,14 @@ const Agent = ({
       setConnecting(false);
       setCallEnded(false);
     };
-
     const onCallEnd = () => {
       setCallActive(false);
       setConnecting(false);
       setIsSpeaking(false);
       setCallEnded(true);
     };
-
     const onSpeechStart = () => setIsSpeaking(true);
     const onSpeechEnd = () => setIsSpeaking(false);
-
     const onMessage = (msg: any) => {
       if (msg.type === "transcript" && msg.transcriptType === "final") {
         setMessages((prev) => [
@@ -285,7 +280,6 @@ const Agent = ({
         ]);
       }
     };
-
     const onError = (error: any) => {
       console.error("VAPI Error:", error);
       setConnecting(false);
@@ -315,69 +309,64 @@ const Agent = ({
   useEffect(() => {
     const handleFeedback = async () => {
       if (!interviewId) return;
-
       const { success, feedbackId: id } = await createFeedback({
         interviewId,
         userId,
         transcript: messages,
       });
-
       if (success && id) router.push(`/interview/${interviewId}/feedback`);
       else router.push("/");
     };
+    if (callEnded && type !== "generate") handleFeedback();
+  }, [callEnded, messages, interviewId, type, userId, router]);
 
-    if (callEnded) {
-      if (type !== "generate") handleFeedback();
-    }
-  }, [callEnded, messages, interviewId, type, userId]);
-
-  // fetch questions from API and start VAPI
+  // start VAPI call with fetched questions
   const handleStartCall = async () => {
+    if (!role || !level || !techstack || !amount || !userId) {
+      alert("Missing required interview info!");
+      return;
+    }
+
     setConnecting(true);
     setMessages([]);
     setCallEnded(false);
 
     try {
-      let finalQuestions = questions;
+      // fetch questions from backend
+      const res = await fetch("/api/vapi/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type,
+          role,
+          level,
+          techstack,
+          amount,
+          userid: userId,
+        }),
+      });
 
-      // fetch questions from backend if not provided
-      if (!finalQuestions && role && level && techstack && amount) {
-        const res = await fetch("/api/vapi/generate", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            type,
-            role,
-            level,
-            techstack,
-            amount,
-            userid: userId,
-          }),
-        });
+      const data = await res.json();
 
-        const data = await res.json();
-        if (data.success) finalQuestions = data.questions;
-        else throw new Error("Failed to fetch questions");
+      if (!data.success || !data.questions?.length) {
+        throw new Error("Failed to fetch questions");
       }
 
-      const formattedQuestions =
-        finalQuestions?.map((q) => `- ${q}`).join("\n") || "";
+      const formattedQuestions = data.questions
+        .map((q: string) => `- ${q}`)
+        .join("\n");
 
       // start VAPI call
-      await vapi.start(
-        formattedQuestions
-          ? "interviewer"
-          : process.env.NEXT_PUBLIC_VAPI_ASSISTANT_ID!,
-        {
-          variableValues: {
-            questions: formattedQuestions,
-            username: userName,
-            userid: userId,
-          },
-        }
-      );
-    } catch (error) {
-      console.error(error);
+      await vapi.start("interviewer", {
+        variableValues: {
+          questions: formattedQuestions,
+          username: userName,
+          userid: userId,
+        },
+      });
+    } catch (err: any) {
+      console.error("Failed to start call:", err);
+      alert(err.message || "Error starting call");
       setConnecting(false);
     }
   };
@@ -387,8 +376,6 @@ const Agent = ({
     setCallActive(false);
     vapi.stop();
   };
-
-  //const latestMessage = messages[messages.length - 1];
 
   return (
     <div className="max-w-4xl mx-auto p-4 flex flex-col gap-6">
